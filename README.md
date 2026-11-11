@@ -1,27 +1,27 @@
 ## Abstract
 
-Offline SWE agents under a hard tool budget often look busy and still fail. The usual failure modes we hit were: repeating the same tool call until the budget dies, submitting an empty diff, or treating the model's own explanation as if it were a passing test.
+Offline SWE agents under a hard tool budget often look busy and still fail: identical tool calls until the budget dies, empty diffs, or treating the model's own prose as a passing test.
 
-We built around a three-layer stack: the closed harness tools, a budgeted trial loop with typed stops, and skill playbooks. Evidence comes from deterministic gates (repro, pytest STATUS, review VERDICT), not from an LLM judge. On the Gemma 4 Developer Agent harness that means graph-first localization, review before `submit_patch`, and a failure taxonomy that keeps infra bugs out of prompt-tuning cycles.
+We introduce a **budget-discipline layer** for closed-tool SWE agents: graph-first localization, typed corrective stops, and deterministic submission gates, with skill playbooks carrying procedure so the sticky system prompt stays short. Evidence is `repro` / pytest `STATUS` / `review.py` `VERDICT` — never assistant explanation. Operator iteration uses the same rule: one cache-friendly change per cycle from local ATIF aggregates (official prediction scoring returns no SessionTraces).
 
-We apply the same rule to our own iteration. A cheap-loop reads aggregate local ATIF traces (Kaggle prediction scoring does not return SessionTraces) and is allowed one cache-friendly change per cycle. On the public empty4 falsifier, a skill-side candidate-path latch cut identical-tool retries from 33 to 1 and average prompt tokens from about 1.04M to about 555k. The system prompt was not edited. Resolve on that shard stayed flat; the claim is discipline and cost, not a resolve leap.
+**Claim.** Under a fixed tool budget, disciplined localization and evidence-gated submission convert wasted exploration into editable patches. The immediate measured effect is a large cut in redundant tool calls and prompt-token cost — the precondition for later edit-quality work — not a resolve leap on small public shards.
+
+On a four-task public empty4 shard (single-run observational comparison, skills-only, frozen `system.md` at 648 tokens), a candidate-path latch package moved average prompt tokens from ~1.04M to ~555k (median ~1.23M → ~555k; min–max after: 112k–997k). On the representative failing task `fastapi_15661`, identical tool retries fell from 33 to 1 and edits appeared (0 → 5). Shard resolve stayed 1/4.
 
 ## 1. Introduction
 
-The Gemma 4 Developer Agent competition runs a small offline coding agent against unfamiliar repositories. The agent must land test-passing patches under a shared wall-clock budget and tight per-task tool limits. Empty patches score zero. Identical tool calls with the same arguments waste the budget fast. The harness exposes code graphs and embeddings as first-class navigation; recursive shell search alone is too slow to be the main plan.
+The Gemma 4 Developer Agent competition runs a small offline coding agent against unfamiliar repositories under a shared wall-clock budget and tight per-task tool limits. Empty patches score zero. Identical tool calls with the same arguments waste the budget. The harness exposes code graphs and embeddings as first-class navigation; recursive shell search alone is too slow to be the main plan.
 
-This writeup targets the **Best New Application** lane: a method you can copy under a similar harness contract — declarative ADK skills, STATUS/NEXT routers, and local ATIF classifiers. Because official prediction scoring does not return SessionTraces, we never burn a prediction Submission for telemetry. Measurement stays on local shards and ATIF traces.
+This writeup targets **Best New Application**: a copyable method under a similar harness contract — declarative ADK skills, STATUS/NEXT routers, and local ATIF classifiers. We never burn a prediction Submission for telemetry.
 
-Paper Track only; the prediction `submission.zip` is a separate deliverable. Public Project Link (no login, no paywall): https://github.com/berdachuk/Gemma4DevAgentPaperTrack
+Paper Track only; prediction `submission.zip` is separate. Public Project Link (no login, no paywall): https://github.com/berdachuk/Gemma4DevAgentPaperTrack
 
 ## 2. Design constraints
 
-The harness fixes several design choices:
-
 - Closed tool surface: shell, file R/W, graph neighbors/subgraph, embedding search, status, `submit_patch`.
-- Tight budgets: ~12 h shared across the task board; local per-task fences on the order of minutes and tens of tool calls.
-- Declarative ADK package: `agent.yaml`, prompts, and Python skills (no custom `agent.py`).
-- Cache-stable system prompt: hard ceiling 800 tokens by chars/4, soft target 650. Procedure belongs in skills (STATUS/NEXT). Do not rewrite the prompt head or middle for date, run id, or other ephemeral fields.
+- Tight budgets: ~12 h shared across the board; local fences on the order of minutes and tens of tool calls.
+- Declarative ADK package: `agent.yaml`, prompts, Python skills (no custom `agent.py`).
+- Cache-stable system prompt: hard ceiling 800 tokens by chars/4, soft 650. Procedure lives in skills (STATUS/NEXT). Do not rewrite the prompt head/middle for ephemeral fields.
 
 ## 3. Methods
 
@@ -30,10 +30,23 @@ The harness fixes several design choices:
 | Term | Meaning |
 |---|---|
 | ATIF | Local agent-trace format under `results/<run>/` (tool calls, timings, outcomes). |
-| empty4 | Four-task public falsifier shard used as a cheap gate before larger evals. |
-| graph_use | Fraction of tasks with a real graph tool call (`get_code_neighbors` / subgraph), not a text mention. |
-| Evidence gate | Pass/fail from external checks (repro, pytest STATUS, review VERDICT). Assistant prose never counts. |
-| Cheap-loop | One measured change per cycle from aggregate traces, paired with a falsifier. |
+| empty4 | Fixed four-task public shard used as a **cheap falsifier**: if a one-lever change does not move the predicted loop metric (retries / empty_patch / graph-before-edit) in the expected direction, reject the change before larger evals. |
+| identical retry | Consecutive (or near-consecutive) tool calls with the same name and normalized args; counted from ATIF. |
+| graph_use | Fraction of tasks with ≥1 real graph tool call. **Compliance**, not usefulness — see §3.1. |
+| Evidence gate | Deterministic external check; assistant prose never counts. |
+| Cheap-loop | One measured change per cycle from aggregate traces + a named falsifier. |
+
+### Protocol (reproducibility)
+
+| Field | Value |
+|---|---|
+| Primary falsifier | empty4 task IDs: `fastapi_14964`, `fastapi_15588`, `fastapi_15589`, `fastapi_15661` |
+| Compare dirs | before `results/shard-empty4-autorelated` → after `results/shard-empty4-candidatelatch` |
+| Runs / seeds | Single-run observational (no multi-seed); treat as case study + shard aggregates |
+| Prompt tokens | Sum of ATIF prompt tokens per task; report avg, median, and min–max |
+| Resolve | Official task `resolved==true` |
+| Frozen prefix | `system.md` unchanged at 648 tokens (skills-only lever) |
+| Larger shards | smoke10 `results/shard-smoke10-autorelated` (3/10); public20-regate `results/shard-live-public20-regate` (4/20) |
 
 ### 3.1 Three-layer stack
 
@@ -45,114 +58,92 @@ skills   ->  playbooks that encode task-family procedure
 
 Figure 1. Budgeted graph-first SWE loop from harness tools through the trial loop and skill playbooks to evidence gates and `submit_patch`. An ATIF cheap-loop sits outside and picks one lever per cycle.
 
-In practice the skills push the agent through:
+Skill path in practice: localize with graph/embed after `show` → reproduce → edit once on a latched candidate → related tests / STATUS → `review.py` VERDICT → `submit_patch` only if non-empty.
 
-1. Localize with graph or embed after `show` (grepish thrash is the failure mode we keep seeing).
-2. Reproduce the failing signal.
-3. Edit once on a latched candidate path.
-4. Run related tests; read STATUS.
-5. Review before submit (VERDICT).
-6. `submit_patch` only if the diff is non-empty.
+`graph_use` alone is weak: a skill can force a call. Prefer **graph-before-edit** (graph tool index &lt; first edit index) and whether an edit appears after localization. On candidatelatch, 3/3 edited tasks had graph-before-edit; `fastapi_15588` called graph but never edited (empty_patch residual).
 
-Stops that fire in our runs:
+### 3.2 Mechanism map (conceptual levers)
 
-- Same tool and args twice → fingerprint stop.
-- `NO_MATCH` after `show` → re-localize; do not invent a path.
-- Empty patch → refuse submit.
-- Review fail → edit again.
+The candidatelatch cycle was one **skills package**, not a factorial ablation. Conceptually:
 
-### 3.2 Failure taxonomy and shard gate
+| Change | Hypothesis | Primary metric |
+|---|---|---|
+| Candidate-path latch (`nav.py show`) | Stop losing the found target | first_edit latency; wrong-file edits |
+| NEED_EDIT / FAIL NEXT → `edit_file '<candidate>'` | Edit instead of endless diagnose/grep | edits on failing tasks; empty_patch |
+| Fingerprint stop | Stop identical tool loops | identical_tool_retries |
+| Review-before-submit | Block empty / non-product / scope-drift diffs | empty_patch; VERDICT FIX FIRST rate |
 
-Classify the failure before touching prompts or stacking Analyzer/LoRA:
+We do **not** claim which sub-mechanism dominated the token/retry drop; negative controls are future work (§6).
 
-`empty_patch`, `no_locate`, `wrong_edit`, `verify_fail`, `infra`, `timeouts`, plus scratch or protected-file leaks.
+### 3.3 Evidence gates and `review.py` VERDICT
 
-The shard gate answers a simple question: harness/infra bug, or agent bug? Analyzer and LoRA wait until the gate says proceed. Skipping that step is how you "fix" the model while the eval wiring is still wrong.
+Gates are deterministic skill scripts, not an LLM judge:
 
-### 3.3 AI-assisted cheap-loop from local traces
+1. **Repro / pytest STATUS** — failing signal before edit; STATUS after related tests.
+2. **`review.py` VERDICT** — inspects the exact diff `submit_patch` would capture. Emits `VERDICT: READY` or `VERDICT: FIX FIRST` from rules including: empty diff; no product `.py`; docs-only / dirty docs noise; edits to grader-reset test/config files; compile failures; leftover debug prints; product edits outside the latched path (scope drift); missing verify / related-test evidence. READY can still be wrong on semantics (`wrong_edit`); the gate targets ship discipline, not patch correctness.
+3. **Empty-patch refuse** — skills forbid `submit_patch` on EMPTY_DIFF / FIX FIRST.
 
-We raise prediction score from local `results/<run>/` ATIF traces and logs. Official Kaggle SessionTraces are not part of that loop.
+### 3.4 Cheap-loop from local traces
 
-1. Aggregate first: `analyze_eval_traces --list`, `classify_eval_results`, then a deeper `analyze_eval_traces`.
-2. Open one or two failing logs, not the whole shard dump.
-3. Stage-1 parquet alone is patch-only; there is no trajectory there.
-4. Do not assume a prediction submit returns traces. It does not, in our reading of the contract.
+Raise score from `results/<run>/` ATIF, not from Kaggle SessionTraces (unavailable on prediction scoring). Aggregate first (`analyze_eval_traces`, `classify_eval_results`); open one or two failing logs; one lever per cycle; write Verdict / counterfactual / falsifier / out-of-scope.
 
-| Signal | Prefer next fix |
-|---|---|
-| low `graph_use` / high grepish | nav/graph after `show` / `NO_MATCH` |
-| high `first_edit_s` | edit after one strong `show` |
-| `identical_tool_retries` | skill fingerprint loop / shell fingerprint |
-| high edits + low resolve | review before submit |
-| high prompt tokens | cut re-reads; analyzer only after gate proceed |
-| high `empty_rate` | ship a patch earlier; then shard why |
-| taxonomy `no_locate` + proceed | analyzer AgentTool plan |
+Wasted cycles we keep rejecting: pasting every trace into chat; growing `system.md`; mid-prompt date rewrites; stacking LoRA + prompt + analyzer in one cycle.
 
-One lever per cycle. Operator writeup of the cycle: Verdict, a 1-3 task counterfactual, the single next change, why it is cheaper or more cache friendly, the falsifier, and what is out of scope.
+### 3.5 Worked cycle: candidate-path latch
 
-Things that repeatedly wasted cycles: pasting every trace into chat; growing `system.md` instead of moving text into skills; rewriting the mid-prompt for a date; stacking LoRA, prompt edits, and analyzer in the same cycle.
+**Setup.** empty4 before/after as in the protocol table. Prior `fastapi_15661` mostly grepped (41 grepish), never edited, 33 identical retries, ~1.37M prompt tokens, died without a usable edit loop.
 
-### 3.4 Worked cycle: candidate-path latch
+**Change (one skills package).** `nav.py show` stores `candidate_path`; `diagnose.py` NEED_EDIT / FAIL NEXT names `edit_file '<candidate>'`. `system.md` stayed at 648 tokens.
 
-Setup: empty4 falsifier at `results/shard-empty4-candidatelatch`. On `fastapi_15661` the prior run mostly grepped, never edited, and died on budget.
+**Lifecycle (`fastapi_15661`, after).** issue load → `get_code_neighbors` (graph index 3) → `nav.py show` latches path → NEED_EDIT → `edit_file` (first edit ~33s; 5 edits total) → tests / review pressure → wall-clock **timeout** (not empty submit). Identical retries 33 → 1; grepish 41 → 9.
 
-Change (one lever), skills only. `system.md` stayed at 648 tokens.
+**empty4 per-task (single-run):**
 
-- `nav.py show` stores `candidate_path`
-- `diagnose.py` NEED_EDIT / FAIL NEXT names `edit_file '<candidate>'`
+| Task | Retries before→after | Edits before→after | Prompt tok before→after | Outcome after |
+|---|---|---|---|---|
+| `fastapi_14964` | 0→0 | 3→2 | 256k→112k | wrong_edit |
+| `fastapi_15588` | 0→2 | 3→0 | 1.08M→997k | empty_patch |
+| `fastapi_15589` | 3→0 | 16→2 | 1.46M→240k | resolved |
+| `fastapi_15661` | **33→1** | **0→5** | 1.37M→870k | timeout |
 
-| Metric | Before to after |
-|---|---|
-| Resolve (empty4) | 1/4 (flat) |
-| `graph_use` | 4/4 = 1.0 |
-| empty_patch (gate) | ≤1 (G2-G4 go) |
-| `fastapi_15661` edits | 0 to 5 |
-| grepish calls | 41 to 9 |
-| identical tool retries | 33 to 1 |
-| prompt tokens (15661) | ~1.37M to ~870k |
-| first_edit | null to 32s |
-| avg empty4 prompt | ~1.04M to ~555k |
+Shard aggregates: resolve **1/4 flat**; graph_use 4/4; avg prompt ~1.04M → ~555k; **median** ~1.23M → ~555k; avg identical retries 9.0 → 0.75. The 33→1 figure is a **representative-task** case study, not a four-task mean of that magnitude.
 
-Resolve did not jump on this shard. Behavior did: edits appeared, retries collapsed, tokens dropped. Residuals still in the mix: timeout-after-edit, `empty_patch`, `wrong_edit`. No prediction Submission was used to collect these traces.
+## 4. Experiments: budget-efficiency frontier
 
-## 4. Experiments
-
-Section 3.4 is the primary measured falsifier. The same metrics apply on every shard: resolve rate, `empty_patch` rate, tool-call histograms, `graph_use_rate`, first-edit elapsed, `identical_tool_retries`, average prompt tokens, failure-taxonomy mix. Falsifiers stay small (`--task-id`, empty4, overlay). Full public20 is not the default every cycle.
-
-We do **not** claim a finished three-way public ablation (no-graph / graph-without-skills / full). What we can reproduce week to week is a **discipline ladder** under a frozen system prompt (skills-only levers):
+We do **not** claim a finished three-way ablation (no-graph / graph-without-skills / full). What we reproduce week to week is a **discipline ladder** under a frozen system prompt — buying cost and behavioral reliability before accuracy:
 
 | Stage (local) | Resolve | graph_use | empty_patch | Cost / loop signal |
 |---|---|---|---|---|
-| Pre-discipline smoke10 | 3/10 | 1/10 | — | grepish storms; graph tools ignored |
+| Pre-discipline smoke10 | 3/10 | 1/10 | — | grepish storms; graph ignored |
 | empty4 graphfix | 0–1/4 | ≥0.5 | 0 | G2–G4 go; nonempty patches |
-| candidatelatch (§3.4) | 1/4 | 4/4 | ≤1 | identical 33→1; avg prompt ~555k |
-| fail_empty / autorelated | 1/4 · smoke10 3/10 | 4/4 · **10/10** | 0 | avg prompt ~354k; empty floor cleared |
+| candidatelatch (§3.5) | 1/4 | 4/4 | ≤1 | 15661 identical 33→1; median prompt ~555k |
+| fail_empty / autorelated | 1/4 · smoke10 3/10 | 4/4 · 10/10 | 0 | avg prompt ~354k; empty floor cleared |
 
-Resolve on these public falsifiers stayed roughly flat (smoke10 **3/10**, public20 freeze **4/20**). The win is process: real graph calls, fewer identical retries, lower prompt tokens, empty-patch gate go. Official prediction publicScore on early burns sat around **0.05–0.06**; we treat that as an external ceiling and keep iterating from local ATIF, not from submit-for-traces.
+Resolve on these public falsifiers stayed roughly flat (smoke10 **3/10**, public20 freeze **4/20**). The frontier move is process: real graph calls, fewer identical retries, lower prompt tokens, empty-patch gate go. Official prediction publicScore on early burns (~0.05–0.06) is an **external ceiling signal only** (few submits; not a multi-run estimate) — we do not use submits for traces.
 
 ### 4.1 Residual after the empty floor
 
-Once `empty_patch` is near zero, the freeze taxonomy is dominated by **`wrong_edit`** (7 ids across smoke10 + public20-regate), then infra and timeouts. That is the intended next cheap-loop target (skills A/B on a `wrong_edit` shard). Analyzer AgentTool and LoRA stay deferred until the shard gate says proceed — stacking them earlier burned budget without clearing the floor.
+Once `empty_patch` is near zero, unresolved mass is **`wrong_edit`** (5 on smoke10; 4 on public20-regate), then infra/timeouts. That is the next cheap-loop target. Analyzer AgentTool and LoRA stay deferred until the shard gate says proceed.
 
 ## 5. Related work and positioning
 
-Closest neighbors are budgeted tool-using coding agents: SWE-agent (Yang et al., 2024), OpenHands / OpenDevin (Wang et al., 2024), and Agentless-style pipelines that cut free-form tool thrash (Xia et al., 2024). SWE-bench (Jimenez et al., 2024) set the repository-level patch yardstick many harnesses now share. Graph and embedding retrieval show up in several stacks next to ordinary search.
+Closest neighbors: SWE-agent (Yang et al., 2024), OpenHands / OpenDevin (Wang et al., 2024), Agentless-style localize→repair→validate (Xia et al., 2024); SWE-bench (Jimenez et al., 2024) as the patch yardstick. Graph/embedding retrieval appears in several stacks beside ordinary search.
 
-Where we spend pages is narrower. STATUS/VERDICT gates are **hard stops**, not an LLM-as-judge submit step. Skills carry procedure so the sticky system prompt stays short and cache-stable — the alternative we keep rejecting is growing the prompt or jumping to RL/PEFT before the empty-patch floor is clear. The operator cheap-loop reads local ATIF aggregates, changes one lever, and refuses prediction Submissions as a telemetry source.
+Our niche is narrower: **budget-aware operational discipline on a closed harness** — hard STATUS/VERDICT stops (not LLM-as-judge submit), skills carrying procedure so the sticky prefix stays cache-stable, and an operator cheap-loop that refuses prediction Submissions as telemetry.
 
 ## 6. Limitations
 
-- Hidden tests may not look like our public shards; local resolve (3/10, 4/20) can diverge from leaderboard publicScore.
-- Official prediction runs return no SessionTraces; ATIF proxies are necessary but imperfect.
-- The discipline ladder is sequential one-lever cycles, not a factorial ablation on the hidden board.
-- Edit quality (`wrong_edit`) remains the open problem after empty-patch discipline.
+- Small *n* (4 / 10 / 20) and single-run comparisons; one heavy task can move averages — report median/min–max.
+- No factorial ablation of latch vs fingerprint vs review (§3.2); candidatelatch is one package.
+- `graph_use` can be compliance; prefer graph-before-edit and edit appearance.
+- `review.py` can block bad ships and still miss semantic wrong edits; it can also over-block.
+- Hidden tests may diverge from public shards; ATIF proxies imperfect without SessionTraces.
+- Edit quality (`wrong_edit`) remains open after the empty floor.
 
 ## 7. Conclusion
 
-Empty patches and tool thrash are cheaper to prevent with gates and skill stops than with a longer system prompt. Keep procedure in skills so the sticky prefix stays small. When the host does not return SessionTraces, raise score from local ATIF aggregates and change one thing per cycle.
-
-On this harness, that is the loop we run for Gemma 4: graph-first localization where the tools allow it, evidence before submit, and a measured cheap-loop outside the agent. After the empty floor, the residual is wrong edits — still one lever at a time.
+Empty patches and tool thrash are cheaper to prevent with gates and skill stops than with a longer system prompt. Under a fixed budget, the measured win of this cycle is elimination of redundant exploration and a large prompt-token cut at flat resolve — clearing the floor so edit-quality levers can be tested one at a time.
 
 ## Acknowledgments
 
-Competition harness and Paper Track rules are those published by the Host on the competition Website. Writeup materials for this entry are Apache-2.0–friendly for winner-license reproducibility (Project Link in §1).
+Competition harness and Paper Track rules are those published by the Host. Writeup materials are Apache-2.0–friendly for winner-license reproducibility (Project Link in §1).
