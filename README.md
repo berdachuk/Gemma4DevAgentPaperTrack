@@ -10,12 +10,9 @@ We apply the same rule to our own iteration. A cheap-loop reads aggregate local 
 
 The Gemma 4 Developer Agent competition runs a small offline coding agent against unfamiliar repositories. The agent must land test-passing patches under a shared wall-clock budget and tight per-task tool limits. Empty patches score zero. Identical tool calls with the same arguments waste the budget fast. The harness exposes code graphs and embeddings as first-class navigation; recursive shell search alone is too slow to be the main plan.
 
-This writeup targets the **Best New Application** lane, with a secondary **Best New Resource** attachment: Apache-2.0 skills, STATUS/NEXT routers, and local ATIF classifiers you can copy under a similar harness contract. Because official prediction scoring does not return SessionTraces, we never burn a prediction Submission for telemetry. Measurement stays on local shards and ATIF traces.
+This writeup targets the **Best New Application** lane: a method you can copy under a similar harness contract — declarative ADK skills, STATUS/NEXT routers, and local ATIF classifiers. Because official prediction scoring does not return SessionTraces, we never burn a prediction Submission for telemetry. Measurement stays on local shards and ATIF traces.
 
-Paper Track only; the prediction `submission.zip` is a separate deliverable. Public Project Links (no login, no paywall):
-
-- Writeup source: https://github.com/berdachuk/Gemma4DevAgentPaperTrack
-- Declarative ADK package + trace/gate scripts (no Competition Data): https://github.com/berdachuk/Gemma4DevAgent
+Paper Track only; the prediction `submission.zip` is a separate deliverable. Public Project Link (no login, no paywall): https://github.com/berdachuk/Gemma4DevAgentPaperTrack
 
 ## 2. Design constraints
 
@@ -158,4 +155,4 @@ On this harness, that is the loop we run for Gemma 4: graph-first localization w
 
 ## Acknowledgments
 
-Competition harness and Paper Track rules are those published by the Host on the competition Website. Writeup and agent packaging for this entry are Apache-2.0–friendly for winner-license reproducibility (Project Links in §1).
+Competition harness and Paper Track rules are those published by the Host on the competition Website. Writeup materials for this entry are Apache-2.0–friendly for winner-license reproducibility (Project Link in §1).
