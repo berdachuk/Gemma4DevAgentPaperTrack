@@ -43,7 +43,7 @@ loop     ->  budgeted trials + typed corrective stops
 skills   ->  playbooks that encode task-family procedure
 ```
 
-Figure 1. Budgeted graph-first SWE loop from harness tools through the trial loop and skill playbooks to evidence gates and `submit_patch`. An ATIF cheap-loop sits outside and picks one lever per cycle. Diagram: Media gallery (`fig1-budgeted-graph-first-swe-loop.png`).
+Figure 1. Budgeted graph-first SWE loop from harness tools through the trial loop and skill playbooks to evidence gates and `submit_patch`. An ATIF cheap-loop sits outside and picks one lever per cycle.
 
 In practice the skills push the agent through:
 
