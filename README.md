@@ -21,7 +21,7 @@ This writeup targets **Best New Application**: declarative ADK skills, STATUS/NE
 ## 2. Design constraints
 
 - Closed tool surface: shell, file R/W, graph neighbors/subgraph, embedding search, status, `submit_patch`.
-- Tight budgets: Host shared wall-clock is on the order of ~12 h across the offline task board; our local eval uses `max_time_minutes: 5.0` (~300 s) per task plus command timeouts of 300 s.
+- Tight budgets: Host shared wall-clock is on the order of ~12 h across the offline task board; our local eval uses `max_time_minutes: 4.5` (~270 s) per task plus command timeouts of 300 s.
 - Declarative ADK package: `agent.yaml`, prompts, Python skills (no custom `agent.py`).
 - Cache-stable system prompt: hard ceiling of approximately 800 tokens (estimated as characters / 4), soft target 650. Procedure lives in skills (STATUS/NEXT). Current packaged prefix is ~600 tokens; the candidatelatch cycle below froze the prefix at 648.
 - Competition model: one allowed alias (12B QAT checkpoint for serving). Adapters are allowed on that base; we do not rewrite the QAT file in place (§4.3).
@@ -51,7 +51,7 @@ This writeup targets **Best New Application**: declarative ADK skills, STATUS/NE
 | Runs / seeds | empty4: single-run observational; analyzer A/B: same 10-task shard, pre-registered drop rule |
 | Prompt tokens | **Cumulative** ATIF `prompt_tokens` summed across model calls in the task (not per-request only) |
 | Identical retries | Consecutive identical fingerprints only (§ Glossary) |
-| Per-task wall clock | Local `max_time_minutes: 5.0` (~300 s) |
+| Per-task wall clock | Local `max_time_minutes: 4.5` (~270 s) |
 | Resolve | Official `resolved==true` |
 | Correct-file | First edited product file appears among files changed in the reference/gold `patch` from the public task JSONL; multi-file partial credit not claimed here |
 | Frozen prefix | candidatelatch cycle: `system.md` at 648 tokens (chars/4); current package ~600 |
